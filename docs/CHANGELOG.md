@@ -6,6 +6,37 @@ Todos los cambios notables realizados en el proyecto del **Gateway** de **eduLLM
 
 ---
 
+## [0.0.3-SNAPSHOT] - 2026-06-02
+
+### Añadido
+- **CORS centralizado en Gateway:** Configurado `globalcors` permitiendo orígenes de los frontends (`localhost:8001`, `8002`, `8003`) con `allowCredentials: true`.
+- **Cabeceras de seguridad HTTP (Security Headers):** Configuradas como `default-filters` en `application.yml`:
+  - `X-Content-Type-Options: nosniff`
+  - `X-Frame-Options: DENY`
+  - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+  - `X-XSS-Protection: 0`
+  - `Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`
+
+---
+
+## [0.0.2-SNAPSHOT] - 2026-05-30
+
+### Modificado
+- **Refactor completo de `JwtAuthenticationFilter`:** Separación de la lógica de filtrado en métodos especializados (`handleLoginSuccessAndRedirect`, `handleVerify`, `handleProtectedRoute`, `extractToken`, `isAuthorized`).
+- **Soporte de extracción de token desde cookie `jwtToken`:** El filtro ahora intenta obtener el JWT primero de la cookie, con fallback al header `Authorization: Bearer`.
+- **Respuestas de error en JSON:** En lugar de códigos HTTP planos, el Gateway retorna `{"error": "..."}` para errores de autenticación y autorización.
+
+### Añadido
+- **Endpoint `/login-success`:** Maneja la redirección post-login al dashboard del frontend correspondiente según el rol del usuario.
+- **Endpoint `/api/auth/verify`:** Endpoint para que el frontend verifique el estado de la sesión activa, retornando datos del usuario en JSON.
+- **Autorización por Rol (RBAC):** Implementación de `isAuthorized()` que consulta `RoleRulesProperties` para validar que el rol del usuario tenga acceso a la ruta solicitada.
+- **Nuevas clases de configuración:**
+  - `FrontendProperties` (`@ConfigurationProperties(prefix = "app.frontend")`): Mapea URLs de frontend por rol.
+  - `RoleRulesProperties` (`@ConfigurationProperties(prefix = "gateway.security")`): Define reglas de acceso por rol.
+- **Dependencia `spring-boot-configuration-processor`:** Para generar metadatos de configuración de las propiedades personalizadas.
+
+---
+
 ## [0.0.1-SNAPSHOT] - 2026-05-25
 
 Esta es la versión inicial del microservicio Gateway en el ecosistema eduLLM.

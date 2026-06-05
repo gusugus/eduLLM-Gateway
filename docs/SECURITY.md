@@ -18,9 +18,34 @@ El Gateway utiliza JSON Web Tokens (JWT) firmados mediante algoritmos simétrico
 
 ---
 
-## 2. Propagación de Identidad e Inyección de Cabeceras (Headers)
+## 2. Extracción del Token
 
-Una vez que el token es verificado con éxito, el Gateway extrae la información de identidad encapsulada en los claims y la propaga internamente mediante cabeceras HTTP limpias:
+El Gateway soporta dos mecanismos para obtener el JWT, evaluados en orden de prioridad:
+
+1. **Cookie `jwtToken`:** Para peticiones desde navegador (login-success, verify, SPA).
+2. **Cabecera `Authorization: Bearer <token>`:** Para peticiones API tradicionales.
+
+## 3. Autorización por Rol (RBAC)
+
+El Gateway implementa control de acceso basado en roles mediante `RoleRulesProperties` (configurado con prefijo `gateway.security.role-rules`). Después de validar el token, verifica que el rol del usuario tenga permiso para acceder al path solicitado. Si no, responde con `403 Forbidden` y `{"error": "Sin permiso"}`.
+
+```yaml
+# Ejemplo de configuración en application.yml
+gateway:
+  security:
+    role-rules:
+      ROLE_ADMINISTRADOR:
+        - "/api/admin/**"
+        - "/api/rag/**"
+      ROLE_PROFESOR:
+        - "/api/rag/**"
+      ROLE_ESTUDIANTE:
+        - "/api/rag/**"
+```
+
+## 4. Propagación de Identidad e Inyección de Cabeceras (Headers)
+
+Una vez que el token es verificado con éxito y el rol está autorizado, el Gateway extrae la información de identidad encapsulada en los claims y la propaga internamente mediante cabeceras HTTP limpias:
 
 | Cabecera Inyectada | Claim de Origen | Formato / Tipo | Propósito |
 |---|---|---|---|
@@ -32,7 +57,35 @@ Los microservicios internos **no** necesitan validar el token JWT; simplemente c
 
 ---
 
-## 3. Seguridad de Red y Mitigación de Riesgos
+## 5. Control de Acceso CORS
+
+El Gateway gestiona CORS de forma centralizada mediante `spring.cloud.gateway.globalcors` en `application.yml`, permitiendo únicamente los orígenes de los frontend conocidos:
+
+| Origen | Frontend |
+|---|---|
+| `http://localhost:8001` | Administrador |
+| `http://localhost:8002` | Profesor |
+| `http://localhost:8003` | Estudiante |
+
+`allowCredentials: true` permite el envío de cookies HttpOnly (`jwtToken`) desde los frontends.
+
+---
+
+## 6. Cabeceras de Seguridad HTTP (Security Headers)
+
+El Gateway incluye un conjunto de cabeceras de seguridad en todas las respuestas mediante `default-filters` en `application.yml`:
+
+| Cabecera | Valor | Propósito |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | Evita que el navegador interprete MIME types no declarados. |
+| `X-Frame-Options` | `DENY` | Previene ataques de clickjacking al denegar la carga en iframes. |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Obliga a conexiones HTTPS durante 1 año (aplica solo si la conexión ya es HTTPS). |
+| `X-XSS-Protection` | `0` | Desactiva el legacy XSS filter de navegadores antiguos (obsoleto, reemplazado por CSP). |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:` | Restringe orígenes de recursos cargados (scripts, estilos, imágenes) para mitigar XSS. |
+
+---
+
+## 7. Seguridad de Red y Mitigación de Riesgos
 
 ### Prevención de Suplantación de Cabeceras (Header Spoofing)
 Dado que los microservicios internos confían plenamente en las cabeceras `X-User-Id`, `X-User-Role` y `X-Username`, existe el riesgo de que un atacante intente realizar una petición directa a un microservicio (saltándose el Gateway) inyectando manualmente estas cabeceras.
@@ -48,13 +101,13 @@ La clave secreta JWT en `application.yml` está escrita en texto plano.
 
 ---
 
-> **Nota para IA:** Si implementas validación de autorizaciones específicas por rol (RBAC - Role-Based Access Control) en el Gateway en el futuro, puedes modificar `JwtAuthenticationFilter.java` para evaluar el claim `rol` antes de reenviar la petición a rutas administrativas como `/api/admin/**`.
+> **Nota para IA:** La funcionalidad de autorización por rol (RBAC) ya está implementada en el Gateway mediante `RoleRulesProperties` y el método `isAuthorized()` en `JwtAuthenticationFilter`. Para agregar o modificar reglas, edita la propiedad `gateway.security.role-rules` en `application.yml`.
 
 ---
 
 ### Última revisión
-- **Fecha:** 2026-05-25 01:20:13
-- **Commit:** `364990c`
+- **Fecha:** 2026-06-02
+- **Commit:** `HEAD` (cambios sin commit)
 
 ## Instrucciones para actualizar este doc
 - Si cambia el mecanismo de autenticación, la firma de tokens o los headers propagados → actualiza `SECURITY.md`.

@@ -26,6 +26,7 @@ Este documento detalla las librerías de terceros y dependencias utilizadas en e
 | `io.opentelemetry` | `opentelemetry-exporter-otlp` | *Gestionada* | `compile` | Exportador que envía las trazas y métricas del sistema utilizando el estándar OpenTelemetry Protocol (OTLP). |
 | `io.micrometer` | `micrometer-registry-prometheus` | *Gestionada* | `compile` | Traduce las métricas del sistema al formato compatible para raspado (scraping) de Prometheus. |
 | `org.projectlombok` | `lombok` | *Gestionada* | `compile` (Opcional)| Reduce el código boilerplate (genera constructores, capturadores e inicializadores de loggers de forma automática). |
+| `org.springframework.boot` | `spring-boot-configuration-processor` | *Gestionada* | `compile` (Opcional)| Genera metadatos de configuración (IDE autocompletion) para propiedades personalizadas como `app.frontend.*` y `gateway.security.*`. |
 
 *Nota: Las dependencias marcadas como "Gestionada" heredan su versión directamente de la BOM de Spring Cloud o de Spring Boot Parent, asegurando compatibilidad óptima entre las librerías reactivas.*
 
@@ -36,8 +37,8 @@ Este documento detalla las librerías de terceros y dependencias utilizadas en e
 ---
 
 ### Última revisión
-- **Fecha:** 2026-05-25 01:20:13
-- **Commit:** `364990c`
+- **Fecha:** 2026-05-30
+- **Commit:** `HEAD` (cambios sin commit)
 
 ## Instrucciones para actualizar este doc
 - Si cambias o añades dependencias en `pom.xml` → actualiza `DEPENDENCIES.md`.

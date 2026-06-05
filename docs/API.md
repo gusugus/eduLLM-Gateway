@@ -36,8 +36,15 @@ Todas las rutas entrantes que se describen a continuación son recibidas en el p
 
 El Gateway determina la necesidad de autenticación según el path de la petición.
 
+### Endpoints Manejados Directamente por el Gateway
+
+| Método HTTP | Path | Propósito |
+|---|---|---|
+| `GET` | `/login-success` | Valida el token (cookie `jwtToken`), determina el rol y redirige (302) al dashboard del frontend correspondiente (admin/profesor/estudiante). |
+| `GET` | `/api/auth/verify` | Verifica el token (cookie o header) y retorna JSON con `{authenticated, username, rol, idUsuario}`. Usado por el frontend para comprobar sesión activa. |
+
 ### Rutas Públicas (Bypass de Filtro JWT)
-Las siguientes peticiones no requieren una cabecera `Authorization` y son enviadas directamente a los microservicios correspondientes:
+Las siguientes peticiones no requieren autenticación y son enviadas directamente a los microservicios correspondientes:
 
 | Método HTTP | Path de Entrada | Servicio Destino | Propósito |
 |---|---|---|---|
@@ -50,10 +57,15 @@ Las siguientes peticiones no requieren una cabecera `Authorization` y son enviad
 
 *Nota: Cualquier sub-ruta que comience con los prefijos anteriores también es tratada como pública por el Gateway.*
 
-### Rutas Protegidas (Requieren Token JWT)
-Toda ruta que **no** coincida con la lista pública anterior es considerada protegida.
-- **Cabecera requerida:** `Authorization: Bearer <token_jwt>`
-- **Comportamiento si no se presenta:** El Gateway responde `401 Unauthorized` de manera inmediata.
+### Rutas Protegidas (Requieren Token JWT Válido)
+Toda ruta que **no** coincida con la lista pública anterior ni con los endpoints directos es considerada protegida.
+- **Extracción de Token (por orden de prioridad):**
+  1. Cookie `jwtToken` (para peticiones desde navegador).
+  2. Cabecera `Authorization: Bearer <token_jwt>` (para peticiones API).
+- **Autorización por Rol:** El Gateway verifica que el rol del usuario tenga permiso para acceder a la ruta solicitada mediante las reglas configuradas en `gateway.security.role-rules`.
+- **Respuesta en caso de error:** El Gateway retorna un JSON descriptivo:
+  - `401 Unauthorized`: `{"error": "Token requerido"}` o `{"error": "Token inválido"}`
+  - `403 Forbidden`: `{"error": "Sin permiso"}`
 
 ---
 
@@ -101,8 +113,8 @@ X-Username: student@edullm.com
 ---
 
 ### Última revisión
-- **Fecha:** 2026-05-25 01:20:13
-- **Commit:** `364990c`
+- **Fecha:** 2026-05-30
+- **Commit:** `HEAD` (cambios sin commit)
 
 ## Instrucciones para actualizar este doc
 - Si añades una nueva ruta en `application.yml` o cambias los endpoints expuestos → actualiza `API.md`.
