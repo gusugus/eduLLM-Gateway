@@ -15,35 +15,65 @@ sequenceDiagram
     participant GW as Gateway (Puerto 8089)
     participant Filter as JwtAuthenticationFilter
     participant Util as JwtUtil
+    participant FR as FrontendProperties
+    participant RB as RoleRulesProperties
     participant MS as Microservicio Downstream
 
-    Cliente->>GW: Petición HTTP (Path, Headers)
+    Cliente->>GW: Petición HTTP (Path, Headers, Cookies)
     GW->>Filter: Evaluar Filtro Global
-    
-    alt ¿Es Ruta Pública? (Ej: /api/auth/login)
+
+    alt path == /login-success
+        Filter->>Filter: extractToken(cookie jwtToken o header)
+        Filter->>Util: validateToken(token)
+        alt Token inválido o ausente
+            Filter-->>Cliente: Redirect 302 -> /login
+        else Token válido
+            Filter->>Util: extractRol(token)
+            Filter->>FR: getUrlByRole(rol)
+            FR-->>Filter: URL del frontend
+            Filter-->>Cliente: Redirect 302 -> frontend/dashboard
+        end
+    else path == /api/auth/verify
+        Filter->>Filter: extractToken(cookie o header)
+        Filter->>Util: validateToken(token)
+        alt Token inválido
+            Filter-->>Cliente: JSON {authenticated: false}
+        else Token válido
+            Filter->>Util: Extraer Claims (username, rol, idUsuario)
+            Filter-->>Cliente: JSON {authenticated, username, rol, idUsuario}
+        end
+    else ¿Es Ruta Pública? (Ej: /api/auth/login)
         Filter-->>GW: Permitir paso sin modificar
         GW->>MS: Forward original
         MS-->>GW: Respuesta HTTP
         GW-->>Cliente: Respuesta HTTP
     else ¿Es Ruta Protegida?
-        Filter->>Filter: Obtener Header "Authorization: Bearer <token>"
+        Filter->>Filter: extractToken(cookie jwtToken o Authorization header)
         
-        alt Token ausente o formato incorrecto
-            Filter-->>Cliente: Responder 401 Unauthorized
+        alt Token ausente
+            Filter-->>Cliente: JSON 401: {"error": "Token requerido"}
         else Token presente
             Filter->>Util: validateToken(token)
-            Util-->>Filter: Boolean (true/false)
+            Util-->>Filter: Boolean
             
-            alt Token expirado o firma inválida
-                Filter-->>Cliente: Responder 401 Unauthorized
+            alt Token inválido
+                Filter-->>Cliente: JSON 401: {"error": "Token inválido"}
             else Token válido
-                Filter->>Util: Extraer Claims (username, idUsuario, rol)
-                Util-->>Filter: Claims de Identidad
-                Filter->>Filter: Mutar Request (Inyectar X-User-Id, X-User-Role, X-Username)
-                Filter-->>GW: Continuar Filtro Chain
-                GW->>MS: Forward Request Mutado (con cabeceras X-*)
-                MS-->>GW: Respuesta HTTP
-                GW-->>Cliente: Respuesta HTTP
+                Filter->>Util: extractRol(token)
+                Filter->>RB: isAuthorized(path, rol)
+                RB-->>Filter: Boolean
+                
+                alt No autorizado
+                    Filter-->>Cliente: JSON 403: {"error": "Sin permiso"}
+                else Autorizado
+                    Filter->>Util: Extraer Claims (username, idUsuario, rol)
+                    Util-->>Filter: Claims de Identidad
+                    Filter->>Filter: Mutar Request (Inyectar X-User-Id, X-User-Role, X-Username)
+                    Filter-->>GW: Continuar Filtro Chain
+                    GW->>MS: Forward Request Mutado (con cabeceras X-*)
+                    MS-->>GW: Respuesta HTTP
+                    GW-->>Cliente: Respuesta HTTP
+                end
             end
         end
     end
@@ -58,9 +88,12 @@ El código está estructurado en paquetes Java estándar de Spring Boot:
 - **`com.edullm`**
   - [GatewayApplication.java](file:///home/gusgus/eclipse-workspace/Gateway/src/main/java/com/edullm/GatewayApplication.java): Clase principal que arranca la aplicación Spring Boot.
 - **`com.edullm.gateway.filter`**
-  - [JwtAuthenticationFilter.java](file:///home/gusgus/eclipse-workspace/Gateway/src/main/java/com/edullm/gateway/filter/JwtAuthenticationFilter.java): Filtro global que implementa `GlobalFilter` y `Ordered`. Intercepta todas las peticiones para la verificación de JWT.
+  - [JwtAuthenticationFilter.java](file:///home/gusgus/eclipse-workspace/Gateway/src/main/java/com/edullm/gateway/filter/JwtAuthenticationFilter.java): Filtro global que implementa `GlobalFilter` y `Ordered`. Intercepta todas las peticiones para la verificación de JWT, manejo de `login-success`, verificación de sesión y autorización por rol.
 - **`com.edullm.gateway.util`**
   - [JwtUtil.java](file:///home/gusgus/eclipse-workspace/Gateway/src/main/java/com/edullm/gateway/util/JwtUtil.java): Componente de utilidad encargado de interactuar con la biblioteca `io.jsonwebtoken` (JJWT) para verificar la expiración, firma y extraer los claims del token.
+  - [FrontendProperties.java](file:///home/gusgus/eclipse-workspace/Gateway/src/main/java/com/edullm/gateway/util/FrontendProperties.java): Configuración `@ConfigurationProperties(prefix = "app.frontend")` que mapea URLs de frontend por rol (`admin`, `professor`, `student`).
+- **`com.edullm.rules`**
+  - [RoleRulesProperties.java](file:///home/gusgus/eclipse-workspace/Gateway/src/main/java/com/edullm/rules/RoleRulesProperties.java): Configuración `@ConfigurationProperties(prefix = "gateway.security")` que define las reglas de autorización (paths permitidos por rol).
 
 ---
 
@@ -84,36 +117,60 @@ El código está estructurado en paquetes Java estándar de Spring Boot:
 - **Efectos Secundarios:** Ninguno.
 - **Tablas de BD afectadas:** No se lee ni modifica ninguna BD directamente desde el Gateway (los servicios downstream gestionarán sus bases de datos correspondientes).
 
-### 2. Petición a Ruta Protegida con Token Válido
+### 2. Petición a `/login-success` (Redirección Post-Login)
+- **Punto de Entrada:** `GET /login-success`
+- **Recorrido:**
+   1. El navegador llega a esta ruta después de un login exitoso (con cookie `jwtToken`).
+   2. `JwtAuthenticationFilter` detecta el path exacto y llama a `handleLoginSuccessAndRedirect()`.
+   3. Extrae el token de la cookie `jwtToken` (o del header `Authorization` como fallback).
+   4. Si el token es inválido o ausente, redirige (302) a `/login`.
+   5. Si es válido, extrae el rol y consulta `FrontendProperties.getUrlByRole(rol)` para obtener la URL del frontend correspondiente.
+   6. Redirige (302) a `<frontend-url>/dashboard`.
+- **Entrada:** HTTP Request con cookie `jwtToken`.
+- **Salida:** HTTP Redirect 302 al dashboard del frontend.
+- **Tablas de BD afectadas:** Ninguna.
+
+### 3. Petición a `/api/auth/verify` (Verificación de Sesión)
+- **Punto de Entrada:** `GET /api/auth/verify`
+- **Recorrido:**
+   1. El frontend solicita verificar si la sesión está activa.
+   2. `handleVerify()` extrae el token de cookie o header.
+   3. Si es inválido, retorna `{"authenticated": false}` con `401 Unauthorized`.
+   4. Si es válido, retorna `{"authenticated": true, "username": ..., "rol": ..., "idUsuario": ...}`.
+- **Entrada:** HTTP Request con cookie `jwtToken` o header `Authorization`.
+- **Salida:** JSON con estado de autenticación.
+- **Tablas de BD afectadas:** Ninguna.
+
+### 4. Petición a Ruta Protegida con Token Válido y Autorizado
 - **Punto de Entrada:** Cualquier ruta no contenida en la lista pública, por ejemplo, `/api/rag/ask` o `/api/admin/users`.
 - **Recorrido:**
-  1. El cliente envía la petición con la cabecera `Authorization: Bearer <JWT>`.
-  2. `JwtAuthenticationFilter` intercepta la petición, verifica que la ruta no es pública y lee la cabecera `Authorization`.
-  3. Extrae el token (caracteres posteriores al índice 7).
-  4. Llama a `jwtUtil.validateToken(token)`.
-  5. Extrae los claims del token llamando a `jwtUtil.extractUsername(token)`, `jwtUtil.extractIdUsuario(token)` y `jwtUtil.extractRol(token)`.
-  6. Crea un `ServerHttpRequest` mutado agregando las siguientes cabeceras HTTP:
-     - `X-User-Id` (ID único del usuario extraído de `idUsuario`).
-     - `X-User-Role` (Rol del usuario, ej: `ADMIN`, `STUDENT`).
-     - `X-Username` (Nombre de usuario / Subject).
-  7. Invoca `chain.filter` utilizando el exchange mutado.
-  8. El Gateway enruta la petición mutada al microservicio configurado en `application.yml` (`ms-rag` o `ms-admin`).
-- **Entrada:** HTTP Request con header `Authorization`.
+   1. El cliente/envía la petición con cookie `jwtToken` o header `Authorization: Bearer <JWT>`.
+   2. `handleProtectedRoute()` extrae el token mediante `extractToken()`.
+   3. Valida el token con `jwtUtil.validateToken(token)`.
+   4. Extrae el rol y verifica autorización con `isAuthorized(path, rol)` consultando `RoleRulesProperties`.
+   5. Si el rol no tiene permiso, retorna `{"error": "Sin permiso"}` con `403 Forbidden`.
+   6. Si autorizado, extrae los claims y muta la request con headers:
+      - `X-User-Id` (ID único del usuario extraído de `idUsuario`).
+      - `X-User-Role` (Rol del usuario, ej: `ADMIN`, `STUDENT`).
+      - `X-Username` (Nombre de usuario / Subject).
+   7. Invoca `chain.filter` utilizando el exchange mutado.
+   8. El Gateway enruta la petición mutada al microservicio configurado en `application.yml`.
+- **Entrada:** HTTP Request con cookie `jwtToken` o header `Authorization`.
 - **Salida:** HTTP Response del microservicio downstream.
 - **Efectos Secundarios:** Los microservicios internos reciben las cabeceras `X-User-Id`, `X-User-Role` y `X-Username` como prueba de identidad autenticada y autorizada por el Gateway.
 - **Tablas de BD afectadas:** Ninguna en el Gateway.
 
-### 3. Petición Protegida con Token Inválido o Ausente
-- **Punto de Entrada:** Ruta protegida (ej: `/api/rag/history`) sin cabecera de autenticación o con un token alterado/expirado.
+### 5. Petición Protegida con Token Inválido, Ausente o No Autorizado
+- **Punto de Entrada:** Ruta protegida (ej: `/api/rag/history`) sin token válido o sin permisos de rol suficientes.
 - **Recorrido:**
-  1. El cliente realiza la solicitud al Gateway.
-  2. `JwtAuthenticationFilter` intercepta la llamada.
-  3. Al no encontrar cabecera `Authorization`, o si esta no empieza por `Bearer `, o si `jwtUtil.validateToken(token)` retorna `false` (o lanza una excepción de firma/expiración):
-     - Establece el código de estado HTTP a `401 Unauthorized` (`exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED)`).
-     - Termina la petición inmediatamente llamando a `exchange.getResponse().setComplete()`.
-  4. El flujo de enrutamiento se detiene y no se llama al microservicio downstream.
-- **Entrada:** HTTP Request sin token válido.
-- **Salida:** HTTP Response con código `401 Unauthorized`.
+   1. El cliente realiza la solicitud al Gateway.
+   2. `handleProtectedRoute()` intercepta la llamada.
+   3. Si el token no se encuentra: retorna `{"error": "Token requerido"}` (`401`).
+   4. Si el token es inválido/expirado: retorna `{"error": "Token inválido"}` (`401`).
+   5. Si el token es válido pero el rol no tiene permiso para la ruta: retorna `{"error": "Sin permiso"}` (`403`).
+   6. El flujo de enrutamiento se detiene y no se llama al microservicio downstream.
+- **Entrada:** HTTP Request sin token válido o sin permisos.
+- **Salida:** HTTP Response con JSON de error (`401` o `403`).
 - **Efectos Secundarios:** Ninguno. La petición no llega a los microservicios downstream.
 - **Tablas de BD afectadas:** Ninguna.
 
@@ -124,6 +181,8 @@ El código está estructurado en paquetes Java estándar de Spring Boot:
 - **Arquitectura Reactive/Non-blocking:** Spring Cloud Gateway utiliza Netty y Project Reactor. Esto permite procesar un alto número de conexiones simultáneas con baja latencia y pocos recursos en comparación con arquitecturas tradicionales basadas en hilos por petición (como Spring Cloud Zuul 1.x o Spring MVC clásico).
 - **Propagación de Identidad por Headers (`X-*`):** En lugar de que cada microservicio valide el token JWT independientemente contra la base de datos o descifre la firma repetidamente, el Gateway centraliza esta tarea. Si la solicitud pasa el Gateway, los microservicios asumen que el token es válido y confían en las cabeceras `X-User-Id`, `X-User-Role` y `X-Username` para aplicar reglas de negocio internas de autorización.
 - **Precedencia del Filtro (`Order = -100`):** Al establecer un orden de `-100`, el filtro de seguridad se ejecuta antes de cualquier otro filtro de transformación o balanceo de carga de Spring Cloud Gateway, previniendo que peticiones no autorizadas consuman recursos de enrutamiento.
+- **RBAC (Role-Based Access Control):** El Gateway ahora valida autorización por rol mediante `RoleRulesProperties`, que define qué paths puede acceder cada rol. Esto centraliza las reglas de acceso en lugar de delegarlas a cada microservicio.
+- **Extracción de Token desde Cookie:** El filtro soporta extraer el JWT desde la cookie `jwtToken` (para peticiones de navegador) con fallback al header `Authorization: Bearer`, permitiendo que el frontend trabaje con cookies HttpOnly.
 
 ---
 
@@ -132,8 +191,8 @@ El código está estructurado en paquetes Java estándar de Spring Boot:
 ---
 
 ### Última revisión
-- **Fecha:** 2026-05-25 01:20:13
-- **Commit:** `364990c`
+- **Fecha:** 2026-05-30
+- **Commit:** `HEAD` (cambios sin commit)
 
 ## Instrucciones para actualizar este doc
 - Si cambia un flujo de petición, el orden del filtro o las rutas de enrutamiento → actualiza `ARCHITECTURE.md`.

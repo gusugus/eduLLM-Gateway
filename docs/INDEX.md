@@ -27,8 +27,8 @@ Este directorio contiene la documentación técnica oficial del **Gateway** de *
 ---
 
 ### Última revisión
-- **Fecha:** 2026-05-25 01:20:13
-- **Commit:** `364990c`
+- **Fecha:** 2026-05-30
+- **Commit:** `HEAD` (cambios sin commit)
 
 ## Instrucciones para actualizar este doc
 - Si cambia la estructura de archivos → actualiza `INDEX.md`.
