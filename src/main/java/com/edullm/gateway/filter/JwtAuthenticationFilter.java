@@ -23,7 +23,6 @@ import reactor.core.publisher.Mono;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -39,10 +38,6 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     @Autowired
     private FrontendProperties frontendProperties;
 
-    private static final List<String> PUBLIC_PATHS = List.of(
-        "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password",
-        "/login", "/forgot-password", "/reset-password"
-    );
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
@@ -65,7 +60,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         }
         
         // Rutas públicas (sin autenticación)
-        if (PUBLIC_PATHS.stream().anyMatch(path::startsWith)) {
+        if (roleRules.getPublicPaths().stream().anyMatch(path::startsWith)) {
             return chain.filter(exchange);
         }
         
