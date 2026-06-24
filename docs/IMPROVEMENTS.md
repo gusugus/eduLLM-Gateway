@@ -39,6 +39,12 @@ Actualmente, un token JWT es válido hasta que expira naturalmente. Si un usuari
 Actualmente, los microservicios individuales configuran sus políticas CORS. Esto puede generar conflictos si la cabecera es inyectada o duplicada por el Gateway.
 - **Implementación:** Configurar el soporte CORS global de Spring Cloud Gateway en `application.yml` para unificar el dominio permitido (ej. el puerto del Frontend React/Vue).
 
+### D. WebSocket / Socket.IO — Mejoras de Seguridad
+Actualmente Socket.IO usa HTTP polling primero (pasa por `JwtAuthenticationFilter`) y luego hace upgrade a WebSocket.
+- **Propuesta:** si se requiere autenticar también el WebSocket upgrade (no solo el polling), se puede agregar un filtro específico que valide el token JWT en el handshake de upgrade. Sin embargo, como el navegador envía las cookies automáticamente en el upgrade request, el `JwtAuthenticationFilter` existente ya las intercepta — **no se necesita un filtro adicional**.
+- **Mejora opcional:** agregar `/socket.io` a `PUBLIC_PATHS` si se quiere delegar toda la autenticación Socket.IO al microservicio (que ya recibe el token via `auth` de Socket.IO).
+- **Content-Security-Policy:** si se usa CDN para Socket.IO (`cdn.socket.io`), el CSP del gateway debe permitirlo: `script-src 'self' 'unsafe-inline' https://cdn.socket.io`.
+
 ```yaml
 spring:
   cloud:

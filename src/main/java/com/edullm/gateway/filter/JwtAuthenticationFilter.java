@@ -178,8 +178,14 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
      */
     private boolean isAuthorized(String path, String rol) {
         var allowed = roleRules.getRoleRules().get(rol);
-        return allowed != null && allowed.stream().anyMatch(p -> 
-            path.matches(p.replace("**", ".*").replace("*", "[^/]*")));
+        return allowed != null && allowed.stream().anyMatch(p -> {
+            String regex = p
+                .replace(".", "\\.")       // escapar puntos literales
+                .replace("**", "___GLOB___")
+                .replace("*", "[^/]*")
+                .replace("___GLOB___", ".*");
+            return path.matches(regex);
+        });
     }
     
     /**

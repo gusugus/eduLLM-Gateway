@@ -1,5 +1,15 @@
 FROM amazoncorretto:17-alpine
+
+# Crear usuario no-root
+RUN addgroup -g 1001 -S nodegroup && \
+    adduser -S nodeuser -G nodegroup -u 1001
+
 WORKDIR /app
+
+# Cambiar propietario
+COPY --chown=nodeuser:nodegroup . .
+
+USER nodeuser
 
 # Copiar el JAR de la aplicación
 COPY ./target/Gateway-0.0.1-SNAPSHOT.jar app.jar
