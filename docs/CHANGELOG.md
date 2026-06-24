@@ -6,6 +6,18 @@ Todos los cambios notables realizados en el proyecto del **Gateway** de **eduLLM
 
 ---
 
+## [0.1.0-SNAPSHOT] - 2026-06-19
+
+### Corregido
+- **Ruta `game/socket.io/**` sin barra inicial en `application.yml`:** Faltaba la `/` al inicio del path en la ruta `ms-profesor`, lo que impedía que Spring Cloud Gateway matcheara las peticiones entrantes a `/game/socket.io/`.
+
+- **Bug en `isAuthorized()` (`JwtAuthenticationFilter`):** La conversión de glob a regex primero reemplazaba `**` → `.*` y luego `*` → `[^/]*`, pero el segundo reemplazo también modificaba el `*` del `.*` generado, rompiendo el patrón. Además, los puntos literales en los paths (ej: `socket.io`) no se escapaban. Se corrigió el orden de reemplazos y se agrega escape de puntos.
+
+### Modificado
+- **Documentación de WebSocket/Socket.IO en `ARCHITECTURE.md`:** Se actualizó para reflejar las dos rutas de Socket.IO (`/socket.io/**` para prompting-ms y `/game/socket.io/**` para ms-profesor) y sus respectivas reglas de autorización.
+
+---
+
 ## [0.0.3-SNAPSHOT] - 2026-06-02
 
 ### Añadido

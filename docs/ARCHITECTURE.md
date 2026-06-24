@@ -176,6 +176,41 @@ El código está estructurado en paquetes Java estándar de Spring Boot:
 
 ---
 
+## WebSocket / Socket.IO
+
+El Gateway **no necesita un filtro adicional** para manejar WebSocket. Spring Cloud Gateway soporta WebSocket nativamente:
+
+1. Socket.IO comienza con **HTTP polling** (`/game/socket.io/?transport=polling` o `/socket.io/?transport=polling`) — el `JwtAuthenticationFilter` lo intercepta como cualquier petición HTTP, valida el token, y lo enruta al microservicio.
+2. Luego intenta **upgrade a WebSocket** (`Upgrade: websocket`) — Spring Cloud Gateway maneja el handshake de upgrade automáticamente, sin necesidad de configuración extra.
+
+Existen **dos rutas de Socket.IO** que el Gateway enruta a diferentes backends:
+
+| Ruta | Backend | Uso |
+|---|---|---|
+| `/socket.io/**` | `http://prompting-ms:8000` | Tutor virtual (alumno) |
+| `/game/socket.io/**` | `http://ms-profesor:8082` | Juego en vivo (profesor y estudiante) |
+
+**Configuración de rutas en `application.yml`:**
+
+```yaml
+- id: ms-prompting
+  uri: http://prompting-ms:8000
+  predicates:
+    - Path=/tutor/**, /socket.io/**, /quiz, /api/quiz/**, /api/generate-quiz
+
+- id: ms-profesor
+  uri: http://ms-profesor:8082
+  predicates:
+    - Path=/api/profesor/**, /api/profesor/dashboard/**, /api/profesor/cuestionarios/**, /api/profesor/partidas/**, /api/profesor/materias/**, /game/socket.io/**
+```
+
+**Reglas de autorización por rol:** el `JwtAuthenticationFilter` valida que el rol tenga permiso para el path:
+
+- `ROLE_ESTUDIANTE` y `ROLE_PROFESOR` tienen acceso a `/game/socket.io/**`
+- `ROLE_ADMINISTRADOR` tiene acceso a `/socket.io/**`
+
+Para WebSocket upgrade, el navegador envía la cookie `jwtToken` automáticamente (mismo origen), por lo que no se requiere lógica adicional.
+
 ## Decisiones Técnicas Clave
 
 - **Arquitectura Reactive/Non-blocking:** Spring Cloud Gateway utiliza Netty y Project Reactor. Esto permite procesar un alto número de conexiones simultáneas con baja latencia y pocos recursos en comparación con arquitecturas tradicionales basadas en hilos por petición (como Spring Cloud Zuul 1.x o Spring MVC clásico).
