@@ -1,6 +1,7 @@
 package com.edullm.gateway.filter;
 
 import com.edullm.gateway.util.FrontendProperties;
+import com.edullm.gateway.util.FrontendProxyProperties;
 import com.edullm.gateway.util.JwtUtil;
 import com.edullm.rules.RoleRulesProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -23,7 +24,10 @@ import reactor.core.publisher.Mono;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -37,6 +41,9 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     
     @Autowired
     private FrontendProperties frontendProperties;
+
+    @Autowired
+    private FrontendProxyProperties frontendProxyProperties;
 
 
     @Override
@@ -62,6 +69,17 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         // Rutas públicas (sin autenticación)
         if (roleRules.getPublicPaths().stream().anyMatch(path::startsWith)) {
             return chain.filter(exchange);
+        }
+        
+        // Si la ruta no coincide con ninguna ruta conocida, la maneja el catch-all
+        if (isUnknownPath(path)) {
+            log.info("Ruta desconocida, dejando pasar al catch-all: {}", path);
+            return chain.filter(exchange);
+        }
+        
+        // Rutas de frontend proxy — verifican token y rol
+        if (frontendProxyProperties.isEnabled() && isFrontendProxyPath(path)) {
+            return handleFrontendProxyPath(exchange, chain, path);
         }
         
         // Rutas protegidas (requieren token válido)
@@ -95,8 +113,31 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         log.info("Login exitoso - Usuario: {}, Rol: {}", username, rol);
         
         // Obtener URL del frontend según el rol
-        String frontendUrl = frontendProperties.getUrlByRole(rol);
-        String redirectUrl = frontendUrl + "/dashboard";
+        String redirectUrl;
+        if (frontendProxyProperties.isEnabled()) {
+            String basename = frontendProxyProperties.getBasenameByRole(rol);
+
+            if (!frontendProxyProperties.getPublicUrl().isEmpty()) {
+                redirectUrl = frontendProxyProperties.getPublicUrl() + basename + "/dashboard";
+            } else {
+                String forwardedProto = exchange.getRequest().getHeaders().getFirst("X-Forwarded-Proto");
+                String forwardedHost = exchange.getRequest().getHeaders().getFirst("X-Forwarded-Host");
+                String rawHost = exchange.getRequest().getHeaders().getFirst("Host");
+
+                log.info("Proxy headers - X-Forwarded-Proto: {}, X-Forwarded-Host: {}, Host: {}",
+                    forwardedProto, forwardedHost, rawHost);
+
+                String scheme = forwardedProto != null ? forwardedProto : exchange.getRequest().getURI().getScheme();
+                String host = forwardedHost != null ? forwardedHost : rawHost;
+
+                redirectUrl = scheme + "://" + host + basename + "/dashboard";
+            }
+
+            log.info("Proxy redirect a: {}", redirectUrl);
+        } else {
+            String frontendUrl = frontendProperties.getUrlByRole(rol);
+            redirectUrl = frontendUrl + "/dashboard";
+        }
         
         log.info("Redirigiendo a: {}", redirectUrl);
         
@@ -178,14 +219,73 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
      */
     private boolean isAuthorized(String path, String rol) {
         var allowed = roleRules.getRoleRules().get(rol);
-        return allowed != null && allowed.stream().anyMatch(p -> {
-            String regex = p
-                .replace(".", "\\.")       // escapar puntos literales
-                .replace("**", "___GLOB___")
-                .replace("*", "[^/]*")
-                .replace("___GLOB___", ".*");
-            return path.matches(regex);
-        });
+        return allowed != null && allowed.stream().anyMatch(p -> matchesGlob(path, p));
+    }
+    
+    private Mono<Void> handleFrontendProxyPath(ServerWebExchange exchange, GatewayFilterChain chain, String path) {
+        String token = extractToken(exchange);
+        if (token == null || !jwtUtil.validateToken(token)) {
+            log.warn("Token requerido para frontend proxy: {}", path);
+            return redirectToLogin(exchange);
+        }
+        String rol = jwtUtil.extractRol(token);
+        String requiredRole = getRequiredRoleForPath(path);
+        if (requiredRole != null && !rol.equals(requiredRole)) {
+            log.warn("Acceso denegado a '{}': rol {} no coincide con {}", path, rol, requiredRole);
+            String basename = frontendProxyProperties.getBasenameByRole(rol);
+            if (!basename.isEmpty()) {
+                String scheme = exchange.getRequest().getURI().getScheme();
+                String host = exchange.getRequest().getHeaders().getFirst("Host");
+                String redirectUrl = scheme + "://" + host + basename + "/dashboard";
+                log.info("Redirigiendo a dashboard según rol: {}", redirectUrl);
+                exchange.getResponse().setStatusCode(HttpStatus.FOUND);
+                exchange.getResponse().getHeaders().setLocation(URI.create(redirectUrl));
+                return exchange.getResponse().setComplete();
+            }
+            return errorResponse(exchange, HttpStatus.FORBIDDEN, "Acceso denegado para este rol");
+        }
+        log.debug("Ruta frontend proxy autorizada: {} -> {}", path, rol);
+        return chain.filter(exchange);
+    }
+
+    private String getRequiredRoleForPath(String path) {
+        if (path.startsWith("/estudiante/")) return "ROLE_ESTUDIANTE";
+        if (path.startsWith("/profesor/")) return "ROLE_PROFESOR";
+        if (path.startsWith("/admin/")) return "ROLE_ADMINISTRADOR";
+        return null;
+    }
+
+    /**
+     * Verifica si la ruta no coincide con ninguna ruta gestionada por el Gateway.
+     * Si es así, la maneja el catch-all (RewritePath a /inicio).
+     */
+    private boolean isUnknownPath(String path) {
+        Set<String> knownPatterns = roleRules.getRoleRules().values().stream()
+            .flatMap(Collection::stream)
+            .collect(Collectors.toSet());
+        if (knownPatterns.stream().anyMatch(p -> matchesGlob(path, p))) {
+            return false;
+        }
+        // Las rutas de frontend proxy también son conocidas
+        if (frontendProxyProperties.isEnabled() && isFrontendProxyPath(path)) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isFrontendProxyPath(String path) {
+        return path.startsWith("/estudiante/")
+            || path.startsWith("/profesor/")
+            || path.startsWith("/admin/");
+    }
+
+    private boolean matchesGlob(String path, String pattern) {
+        String regex = pattern
+            .replace(".", "\\.")
+            .replace("**", "___GLOB___")
+            .replace("*", "[^/]*")
+            .replace("___GLOB___", ".*");
+        return path.matches(regex);
     }
     
     /**
